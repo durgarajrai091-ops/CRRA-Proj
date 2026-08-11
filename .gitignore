@@ -1,5 +1,5 @@
-﻿.env
+.env
 labenv/
 __pycache__/
 *.pyc
-logs/
+logs/*.jsonl
