@@ -48,7 +48,6 @@ class TicketState(TypedDict):
     category: str
     priority: str
     sla_due: str
-    request_type: str  # e.g. "Access Grant" — only populated on REQ- tickets
 
     # PII redaction — populated by triage_node, consumed by every node
     # that sends ticket text to Claude, restored just before the final
@@ -80,7 +79,6 @@ class TicketState(TypedDict):
 
     # Workflow control
     hitl_required: bool
-    hitl_reason: str  # Lab C7 — human-readable reason shown at the HITL gate
     hitl_approved: bool
     final_status: str
     audit_log: list
@@ -332,28 +330,7 @@ def sla_node(state: TicketState) -> TicketState:
         risk = "ON_TRACK"
 
     escalation_required = risk in ["BREACHED", "CRITICAL"] and priority in ["P1", "P2"]
-
-    # ── HITL trigger conditions (Lab C7) ──────────────────────────────────
-    # Three independent triggers; any one is sufficient to require a human
-    # approval before the ticket reaches the Communication node. Checked in
-    # this order only to pick the most relevant reason to display — all three
-    # are equally binding, none overrides another.
-    triage_category = state.get("triage_category", state.get("category", ""))
-    request_type = state.get("request_type", "")
-    confidence = state.get("confidence", "")
-
-    hitl_required = False
-    hitl_reason = ""
-
-    if escalation_required and priority == "P1":
-        hitl_required = True
-        hitl_reason = f"P1 SLA {risk} — escalation requires human approval before proceeding"
-    elif triage_category == "Access" and request_type == "Access Grant":
-        hitl_required = True
-        hitl_reason = "ACCESS GRANT — security-sensitive request requires human approval"
-    elif confidence == "LOW":
-        hitl_required = True
-        hitl_reason = "LOW KB confidence — Resolution Agent could not find a clear fix, human review required"
+    hitl_required = escalation_required and priority == "P1"
 
     audit_log = state.get("audit_log", [])
     audit_log.append(log(state, "SLAAgent", "get_sla_status",
@@ -361,15 +338,12 @@ def sla_node(state: TicketState) -> TicketState:
 
     print(f"  SLA Risk: {risk}  |  Minutes remaining: {minutes_remaining}")
     print(f"  Escalation needed: {escalation_required}  |  HITL required: {hitl_required}")
-    if hitl_required:
-        print(f"  HITL reason: {hitl_reason}")
 
     return {**state,
             "sla_breach_risk": risk,
             "sla_minutes_remaining": minutes_remaining,
             "escalation_required": escalation_required,
             "hitl_required": hitl_required or state.get("hitl_required", False),
-            "hitl_reason": hitl_reason or state.get("hitl_reason", ""),
             "audit_log": audit_log}
 
 # ══════════════════════════════════════════════════════
@@ -379,9 +353,8 @@ def sla_node(state: TicketState) -> TicketState:
 def hitl_node(state: TicketState) -> TicketState:
     print(f"\n▶ HITL GATE — human approval required")
     print(f"  {'⚠️  ' * 8}")
-    reason = state.get("hitl_reason") or f"SLA {state.get('sla_breach_risk')} — escalation pending"
     print(f"  Ticket:  {state['ticket_number']}  |  Priority: {state.get('triage_priority')}")
-    print(f"  Reason:  {reason}")
+    print(f"  Reason:  SLA {state.get('sla_breach_risk')} — escalation pending")
     print(f"  KB Confidence: {state.get('confidence')}  |  Auto-resolve: {state.get('auto_resolve')}")
     print(f"  {'⚠️  ' * 8}")
 
@@ -490,11 +463,6 @@ if __name__ == "__main__":
          "description": "Webex app fails to open after macOS update on Apple Silicon.",
          "category": "Software", "priority": "P3", "sla_due": "2024-01-15 18:00:00",
          "audit_log": []},
-        # Lab C7 — Access Grant request: HITL required regardless of priority/SLA
-        {"ticket_number": "REQ-1002", "short_description": "VPN access for new contractor joining project Phoenix",
-         "description": "New contractor starting Monday needs VPN access to the Phoenix project network segment. Manager approval attached.",
-         "category": "Access", "priority": "P2", "sla_due": "2024-01-15 16:00:00",
-         "request_type": "Access Grant", "audit_log": []},
     ]
 
     for ticket in test_tickets:
