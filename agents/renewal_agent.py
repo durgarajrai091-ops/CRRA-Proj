@@ -338,15 +338,33 @@ def analyse_contract(contract_id: str):
 
             elif name == "submit_recommendation":
                 rec = args
+                # `required` in the tool schema is a hint to the model, not an
+                # enforced constraint — it can still omit a field (seen on
+                # harder, multi-trigger contracts). Use .get() everywhere so a
+                # missing field degrades to a visible placeholder instead of
+                # crashing the whole batch with a KeyError.
+                missing = [
+                    k for k in (
+                        "recommendation", "confidence", "rationale",
+                        "policy_citation", "human_approval_required",
+                    )
+                    if k not in rec
+                ]
+                if missing:
+                    print(f"  ⚠️  model omitted required field(s): {', '.join(missing)} — treating as LOW confidence")
+                    rec.setdefault("confidence", "LOW")
+                    rec.setdefault("human_approval_required", True)  # fail safe: force a human look
+
                 print(f"\n  ┌─ RECOMMENDATION ─────────────────────────────────")
-                print(f"  │ {rec['recommendation']}   confidence {rec['confidence']}")
-                print(f"  │ Policy: {rec['policy_citation']}")
+                print(f"  │ {rec.get('recommendation', '(missing)')}   confidence {rec.get('confidence', '(missing)')}")
+                print(f"  │ Policy: {rec.get('policy_citation', '(not provided by model)')}")
                 impact = rec.get("estimated_annual_impact_inr")
                 if impact:
                     print(f"  │ Impact: INR {impact:,}/yr")
-                print(f"  │ Human approval required: {rec['human_approval_required']}")
+                print(f"  │ Human approval required: {rec.get('human_approval_required', True)}")
                 print(f"  └──────────────────────────────────────────────────")
-                print(f"  {rec['rationale']}")
+                print(f"  {rec.get('rationale', '(no rationale provided)')}")
+                rec.setdefault("contract_id", contract_id)
                 return rec
 
             else:
@@ -386,10 +404,10 @@ def main() -> None:
         impact = r.get("estimated_annual_impact_inr") or 0
         impact_s = f"INR {impact:,}" if impact else "—"
         print(
-            f"{r['contract_id']:<11}{r['recommendation']:<14}{r['confidence']:<8}"
-            f"{str(r['human_approval_required']):<11}{impact_s}"
+            f"{r.get('contract_id', '?'):<11}{r.get('recommendation', '?'):<14}{r.get('confidence', '?'):<8}"
+            f"{str(r.get('human_approval_required', True)):<11}{impact_s}"
         )
-    needs_human = sum(1 for r in results if r["human_approval_required"])
+    needs_human = sum(1 for r in results if r.get("human_approval_required", True))
     print("-" * 62)
     print(f"{len(results)} analysed · {needs_human} require human approval before action")
 
